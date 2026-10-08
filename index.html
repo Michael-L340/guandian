@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f5f2eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="观点复盘">
+<title>观点复盘</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="#home" id="brand">观点复盘</a>
+  <a class="t" href="#home">首页</a><a class="t" href="#ledger">账本</a><a class="t" href="#calendar">日历</a><a class="t" href="#review">复盘</a><a class="t" href="#settings">设置</a>
+  <span class="sp"></span>
+  <label class="srch">🔍 <input id="q" placeholder="搜正文、标签、出处…" autocomplete="off"></label>
+</nav>
+<main class="wrap" id="main"><div class="empty">正在读取…</div></main>
+<nav class="tabbar" id="tabbar"><a href="#home">首页</a><a href="#ledger">账本</a><a href="#calendar">日历</a><a href="#review">复盘</a><a href="#settings">设置</a></nav>
+
+<div class="login" id="login" hidden>
+  <div class="card">
+    <h1 id="login-title">观点复盘</h1>
+    <p class="sub">只给自己看的判断账本。用邮箱验证码登录。</p>
+    <div id="login-step1">
+      <div class="field"><label for="login-email">邮箱</label><input id="login-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"></div>
+      <button class="btn primary" id="login-send">发送验证码</button>
+    </div>
+    <div id="login-step2" hidden>
+      <div class="field"><label for="login-code">邮件里的 6 位验证码</label><input id="login-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="8"></div>
+      <button class="btn primary" id="login-verify">登录</button>
+      <button class="btn" id="login-back" style="margin-top:8px">换个邮箱</button>
+    </div>
+    <div class="msg" id="login-msg"></div>
+    <div class="setup" id="login-setup" hidden></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

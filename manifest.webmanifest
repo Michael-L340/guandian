@@ -1,0 +1,15 @@
+{
+  "name": "观点复盘",
+  "short_name": "观点复盘",
+  "description": "把做研究时下的判断记下来，到兑现时间后回头看对不对。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f2eb",
+  "theme_color": "#f5f2eb",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
