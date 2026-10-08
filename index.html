@@ -31,16 +31,11 @@
 <div class="login" id="login" hidden>
   <div class="card">
     <h1 id="login-title">观点复盘</h1>
-    <p class="sub">只给自己看的判断账本。用邮箱验证码登录。</p>
-    <div id="login-step1">
-      <div class="field"><label for="login-email">邮箱</label><input id="login-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"></div>
-      <button class="btn primary" id="login-send">发送验证码</button>
-    </div>
-    <div id="login-step2" hidden>
-      <div class="field"><label for="login-code">邮件里的 6 位验证码</label><input id="login-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="8"></div>
-      <button class="btn primary" id="login-verify">登录</button>
-      <button class="btn" id="login-back" style="margin-top:8px">换个邮箱</button>
-    </div>
+    <p class="sub">只给自己看的判断账本。</p>
+    <div class="field"><label for="login-email">邮箱</label><input id="login-email" type="email" autocomplete="username" inputmode="email" placeholder="you@example.com"></div>
+    <div class="field"><label for="login-pass">密码（至少 10 位）</label><input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••••"></div>
+    <button class="btn primary" id="login-go">登录</button>
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="login-signup" style="flex:1">首次使用：注册</button><button class="btn" id="login-reset" style="flex:1">忘记密码</button></div>
     <div class="msg" id="login-msg"></div>
     <div class="setup" id="login-setup" hidden></div>
   </div>

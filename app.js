@@ -2,7 +2,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 const CONFIGURED = /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(SUPABASE_URL) && SUPABASE_ANON_KEY.length > 40 && !SUPABASE_ANON_KEY.startsWith('__');
-const sb = CONFIGURED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } }) : null;
+const sb = CONFIGURED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
 // ---------- 日期：全部按北京时间 ----------
 const fmtSH = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -293,7 +293,8 @@ function reviewHTML() {
 function settingsHTML() {
   const bytes = new Blob([JSON.stringify({ rows, logs, events })]).size;
   return `<h1>设置</h1>
-  <h2>账号</h2><div class="box">${esc(user?.email || '')} <button class="btn sm" style="margin-left:10px" onclick="logout()">退出登录</button></div>
+  <h2>账号</h2><div class="box">${esc(user?.email || '')} <button class="btn sm" style="margin-left:10px" onclick="logout()">退出登录</button>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end;margin-top:12px;max-width:620px"><div class="field" style="margin:0"><label for="np1">新密码（至少 10 位）</label><input id="np1" type="password" autocomplete="new-password"></div><div class="field" style="margin:0"><label for="np2">再输一次</label><input id="np2" type="password" autocomplete="new-password"></div><button class="btn" onclick="changePass()">修改密码</button></div></div>
   <h2>网站名字</h2><div class="field" style="max-width:320px"><input value="${esc(S.name)}" onchange="S.name=this.value.trim()||'观点复盘';saveSettings();go()"></div>
   <h2>账本规则</h2><div class="box">
     <ul style="padding-left:18px;margin:0"><li>「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定，数据库层面改不动；想改口径用「新开一行替代」。</li><li>「实际情况 / 复盘 / 判定 / 错因」到兑现时间之后才能写。</li><li>把握只能在兑现前追加，每次改动都有记录。</li><li>没有删除，只有撤回；撤回的照样算分。</li></ul>
@@ -427,50 +428,74 @@ function exportMd(copy) {
 }
 function exportJson() { download(`${S.name}-${todayISO()}.json`, JSON.stringify({ exported_at: new Date().toISOString(), judgments: rows, confidence_log: logs, events, settings: S }, null, 1), 'application/json'); }
 
-// ---------- 登录 ----------
+// ---------- 登录（邮箱 + 密码；免费版不能改验证码邮件模板，所以不用验证码）----------
 function loginMsg(t, bad) { const m = $('login-msg'); m.textContent = t || ''; m.classList.toggle('bad', !!bad); }
 function showLogin() {
   $('login').hidden = false; main.innerHTML = '';
   if (!CONFIGURED) {
-    $('login-step1').hidden = true; $('login-step2').hidden = true;
+    ['login-go', 'login-signup', 'login-reset'].forEach(id => { $(id).disabled = true; });
     loginMsg('还没有配置数据库。', true);
     const s = $('login-setup'); s.hidden = false; s.textContent = '把 Supabase 项目的 URL 和 anon key 填进 config.js 后再打开这个页面。';
   }
 }
-async function sendCode() {
-  const email = $('login-email').value.trim(); if (!email) { loginMsg('先填邮箱', true); return; }
-  $('login-send').disabled = true; loginMsg('正在发送…');
-  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
-  $('login-send').disabled = false;
-  if (error) { loginMsg(/signups? not allowed|disabled/i.test(error.message) ? '这个邮箱没有账号（注册已关闭）' : '发送失败：' + error.message, true); return; }
-  $('login-step1').hidden = true; $('login-step2').hidden = false; $('login-code').focus(); loginMsg('验证码已发到 ' + email + '，几分钟内有效');
-}
-async function verifyCode() {
-  const email = $('login-email').value.trim(), token = $('login-code').value.trim(); if (!token) return;
-  $('login-verify').disabled = true; loginMsg('正在登录…');
-  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-  $('login-verify').disabled = false;
-  if (error) { loginMsg('验证码不对或已过期：' + error.message, true); return; }
+function creds() { const email = $('login-email').value.trim(), password = $('login-pass').value; if (!email) { loginMsg('先填邮箱', true); return null; } return { email, password }; }
+function busyLogin(on) { ['login-go', 'login-signup', 'login-reset'].forEach(id => { $(id).disabled = on; }); }
+async function signIn() {
+  const c = creds(); if (!c) return; if (!c.password) { loginMsg('先填密码', true); return; }
+  busyLogin(true); loginMsg('正在登录…');
+  const { error } = await sb.auth.signInWithPassword(c);
+  busyLogin(false);
+  if (error) { loginMsg(/invalid login/i.test(error.message) ? '邮箱或密码不对' : /email not confirmed/i.test(error.message) ? '邮箱还没确认：去邮箱点确认链接，再回来登录' : '登录失败：' + error.message, true); return; }
   loginMsg('');
 }
+async function signUp() {
+  const c = creds(); if (!c) return; if (c.password.length < 10) { loginMsg('密码至少 10 位', true); return; }
+  busyLogin(true); loginMsg('正在注册…');
+  const { data, error } = await sb.auth.signUp({ email: c.email, password: c.password, options: { emailRedirectTo: location.origin + location.pathname } });
+  busyLogin(false);
+  if (error) { loginMsg(/signups? not allowed|disabled/i.test(error.message) ? '注册已关闭（这个账本只给一个人用）' : '注册失败：' + error.message, true); return; }
+  if (data.session) { loginMsg(''); return; }   // 已自动确认
+  loginMsg('确认邮件已发到 ' + c.email + '。点邮件里的链接确认后，回到这里用密码登录。（已有账号的话这封邮件不会再发，直接登录即可）');
+}
+async function resetPass() {
+  const c = creds(); if (!c) return;
+  busyLogin(true); loginMsg('正在发送…');
+  const { error } = await sb.auth.resetPasswordForEmail(c.email, { redirectTo: location.origin + location.pathname });
+  busyLogin(false);
+  if (error) { loginMsg('发送失败：' + error.message, true); return; }
+  loginMsg('重设密码的邮件已发到 ' + c.email + '。点链接回到网站后，在「设置」里改密码。');
+}
+async function changePass() {
+  const p1 = $('np1').value, p2 = $('np2').value;
+  if (p1.length < 10) { toast('密码至少 10 位', true); return; }
+  if (p1 !== p2) { toast('两次输入不一样', true); return; }
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  if (error) { toast('改密码失败：' + error.message, true); return; }
+  $('np1').value = ''; $('np2').value = ''; toast('密码已修改');
+}
+let recovering = false;
 async function boot(session) {
   user = session?.user || null;
   if (!user) { showLogin(); return; }
   $('login').hidden = true; main.innerHTML = '<div class="empty">正在读取…</div>';
   try { await loadAll(); } catch (e) { main.innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; return; }
+  if (recovering) { recovering = false; location.hash = '#settings'; toast('请在这里设一个新密码'); }
   go();
 }
 if (CONFIGURED) {
-  $('login-send').onclick = sendCode; $('login-verify').onclick = verifyCode;
-  $('login-back').onclick = () => { $('login-step2').hidden = true; $('login-step1').hidden = false; loginMsg(''); };
-  $('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') sendCode(); });
-  $('login-code').addEventListener('keydown', e => { if (e.key === 'Enter') verifyCode(); });
-  sb.auth.getSession().then(({ data }) => boot(data.session));
-  sb.auth.onAuthStateChange((ev, session) => { if (ev === 'SIGNED_IN' && !user) boot(session); if (ev === 'SIGNED_OUT') { user = null; showLogin(); } });
+  $('login-go').onclick = signIn; $('login-signup').onclick = signUp; $('login-reset').onclick = resetPass;
+  $('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+  $('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') $('login-pass').focus(); });
+  sb.auth.onAuthStateChange((ev, session) => {
+    if (ev === 'PASSWORD_RECOVERY') { recovering = true; }
+    if ((ev === 'SIGNED_IN' || ev === 'PASSWORD_RECOVERY' || ev === 'INITIAL_SESSION') && session && !user) boot(session);
+    if (ev === 'INITIAL_SESSION' && !session) showLogin();
+    if (ev === 'SIGNED_OUT') { user = null; showLogin(); }
+  });
 } else showLogin();
 
 // 页面里的 onclick 是内联字符串，需要这些名字挂在 window 上；可变状态用 getter/setter 透传到模块变量
-Object.assign(window, { go, edit, editDate, editP, setOutcome, setErr, addErr, delErr, renameErr, setType, withdraw, supersede, dupRow, addRow, quickAdd, addEvent, delEvent, logout, exportMd, exportJson, clearSearch, setTag, setSort, toggleCol, moveCol, tog, openRow, rowMenu, saveSettings, toast, COLDEF });
+Object.assign(window, { changePass, go, edit, editDate, editP, setOutcome, setErr, addErr, delErr, renameErr, setType, withdraw, supersede, dupRow, addRow, quickAdd, addEvent, delEvent, logout, exportMd, exportJson, clearSearch, setTag, setSort, toggleCol, moveCol, tog, openRow, rowMenu, saveSettings, toast, COLDEF });
 Object.defineProperties(window, {
   S: { get: () => S, set: v => { S = v; } },
   filter: { get: () => filter, set: v => { filter = v; } },
