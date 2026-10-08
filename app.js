@@ -146,7 +146,7 @@ function cellHTML(key, r) {
     </div>` : ''}</div>`;
     case 'item': return `<div class="c" data-l="事项"><div class="cell item${lock}" data-ph="一句话说清判断对象" onclick="edit(this,${r.id},'item')">${hl(r.item)}</div><div class="sub2">${(r.tags || []).map(t => `<span class="tag" onclick="setTag('${enc(t)}')">${hl(t)}</span>`).join('')}${r.note ? `<span class="p lk">${esc(r.note)}</span>` : ''}</div></div>`;
     case 'claim': {
-      const pb = r.type === '回看' ? '<span class="p lk">回看</span>' : `<span class="p${open ? ' lk' : ''}" style="cursor:pointer" title="把握：你立案时填的；兑现前可以追加新的" onclick="editP(${r.id},event)">${r.p != null ? '把握 ' + r.p + '%' : '填把握'}</span>`;
+      const pb = r.type === '回看' ? '<span class="p lk">回看</span>' : (open && r.p == null) ? '<span class="p lk" title="兑现后不能再填把握">无把握</span>' : `<span class="p${open ? ' lk' : ''}" style="cursor:pointer" title="把握：你立案时填的；兑现前可以追加新的" onclick="editP(${r.id},event)">${r.p != null ? '把握 ' + r.p + '%' : '填把握'}</span>`;
       return `<div class="c" data-l="我的判断"><div class="cell${lock}" data-ph="可判对错的一句话，带数字和日期" onclick="edit(this,${r.id},'claim')">${hl(r.claim)}</div><div class="sub2">${pb}${isLocked(r) ? '' : '<span class="p">24 小时内可改</span>'}<span class="more" onclick="tog(${r.id})">${expanded.has(r.id) ? '收起' : '理由 / 怎么判 / 出处'}</span></div></div>`;
     }
     case 'signal': return `<div class="c" data-l="跟踪信号"><div class="sig"><div class="cell${lock}" data-ph="看哪个数：指标 + 口径" onclick="edit(this,${r.id},'signal')">${hl(r.signal)}</div><span class="src cell" data-ph="从哪取：数据源" onclick="edit(this,${r.id},'src')">${hl(r.src)}</span></div></div>`;
@@ -366,7 +366,7 @@ function editP(id, ev) {
   ev.stopPropagation(); const r = rows.find(x => x.id === id);
   if (reached(r)) { toast('兑现时间已到，不能再改把握'); return; }
   const host = ev.currentTarget; if (host.querySelector('input')) return;
-  const i = document.createElement('input'); i.type = 'number'; i.min = 5; i.max = 95; i.step = 5; i.value = r.p ?? 75; i.style.width = '56px'; host.textContent = ''; host.appendChild(i); i.focus();
+  const i = document.createElement('input'); i.type = 'number'; i.min = 5; i.max = 95; i.step = 5; i.value = r.p ?? 75; i.style.width = '56px'; host.textContent = ''; host.appendChild(i); i.focus(); i.select();
   i.addEventListener('blur', async () => { const v = parseInt(i.value); if (!isNaN(v) && v !== r.p) await dbUpdate(id, { p: Math.max(5, Math.min(95, Math.round(v / 5) * 5)) }); go(); });
   i.addEventListener('keydown', e => { if (e.key === 'Enter') i.blur(); });
 }

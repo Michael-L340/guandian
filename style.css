@@ -17,6 +17,7 @@
 
 /* ---------- base ---------- */
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:var(--fs);line-height:1.55;margin:0;-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -189,14 +190,14 @@ select.chip{appearance:auto;padding:3px 8px}
 .strip .tick{position:absolute;bottom:-1px;height:7px;border-left:1px solid var(--line-2)}
 .strip .tick span{position:absolute;top:9px;left:0;transform:translateX(-50%);font-family:var(--font-mono);font-size:10px;color:var(--fg-3);white-space:nowrap}
 .strip .today{position:absolute;bottom:-1px;top:0;border-left:1px dashed var(--warn)}
-.strip .today span{position:absolute;top:-2px;left:4px;font-size:10px;color:var(--warn)}
+.strip .today span{position:absolute;top:-2px;left:4px;font-size:10px;color:var(--warn);white-space:nowrap}
 .strip .dot{position:absolute;bottom:-5px;width:10px;height:10px;border-radius:50%;background:var(--accent);transform:translateX(-50%);cursor:pointer;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line-2)}
 .strip .dot.due{background:var(--warn)}
 .strip .dot.rv{background:var(--fg-3)}
 .strip .stem{position:absolute;border-left:1px dotted var(--line-2);transform:translateX(-50%)}
 .strip .lbl{position:absolute;transform:translateX(-50%);font-size:11px;color:var(--fg-2);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;background:var(--bg);padding:0 4px;cursor:pointer}
 .strip .lbl:hover{color:var(--accent)}
-.stripnote{font-size:11px;color:var(--fg-3);margin:0 6px 20px;display:flex;gap:14px;flex-wrap:wrap}
+.stripnote{font-size:11px;color:var(--fg-3);margin:26px 6px 20px;display:flex;gap:14px;flex-wrap:wrap}
 .stripnote i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:4px;vertical-align:middle}
 .stripnote i.due{background:var(--warn)} .stripnote i.rv{background:var(--fg-3)}
 .home{display:grid;grid-template-columns:1.55fr 1fr;gap:36px;align-items:start}
@@ -210,6 +211,7 @@ select.chip{appearance:auto;padding:3px 8px}
 .agenda{list-style:none;margin:0;padding:0}
 .agenda .g{font-size:11px;color:var(--fg-3);letter-spacing:.1em;margin:14px 0 2px}
 .agenda li{display:grid;grid-template-columns:58px 1fr auto;gap:10px;padding:8px 0;border-bottom:1px solid var(--grid);align-items:baseline;cursor:pointer}
+.agenda li.foot{display:block;cursor:default;border:0}
 .agenda li:hover .t{color:var(--accent)}
 .agenda li .d{font-family:var(--font-mono);font-size:12px;color:var(--fg-3)}
 .agenda li .t{font-weight:500;min-width:0}
