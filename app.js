@@ -1,7 +1,8 @@
 // 观点复盘 · 前端（纯静态，数据在 Supabase；页面结构和交互来自原型 v10）
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
-const CONFIGURED = /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(SUPABASE_URL) && SUPABASE_ANON_KEY.length > 40 && !SUPABASE_ANON_KEY.startsWith('__');
+const LIB_OK = !!window.supabase;
+const CONFIGURED = LIB_OK && /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(SUPABASE_URL) && SUPABASE_ANON_KEY.length > 40 && !SUPABASE_ANON_KEY.startsWith('__');
 const sb = CONFIGURED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
 // ---------- 日期：全部按北京时间 ----------
@@ -33,21 +34,23 @@ const defaultS = () => ({ cols: Object.keys(COLDEF), hidden: ['created'], sort: 
 // ---------- 状态 ----------
 let rows = [], logs = [], events = [], S = defaultS(), user = null;
 let filter = 'all', tagF = null, q = '', expanded = new Set(), popOpen = false, menuOpen = null, confirmWd = null;
+let editors = 0, dirty = false, busyAdd = false;  // 正在编辑的格子数；有格子在编辑时推迟整页重绘
 const $ = id => document.getElementById(id);
 const main = $('main');
 
 // ---------- 小工具 ----------
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const enc = s => encodeURIComponent(s);
-function hl(s) { s = esc(s); if (!q) return s; const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'); return s.replace(re, m => `<mark>${m}</mark>`); }
+const enc = s => encodeURIComponent(s).replace(/'/g, '%27');
+function hl(s) { s = String(s ?? ''); if (!q) return esc(s); const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'); return s.split(re).map((piece, i) => i % 2 ? `<mark>${esc(piece)}</mark>` : esc(piece)).join(''); }
 function toast(t, bad) { const e = document.createElement('div'); e.className = 'toast'; if (bad) e.style.background = 'var(--bad)'; e.textContent = t; document.body.appendChild(e); setTimeout(() => e.remove(), bad ? 3200 : 1800); }
-function stateOf(r) { if (r.status === 'withdrawn') return 'withdrawn'; if (r.outcome || r.review) return 'done'; return daysTo(r.due) <= 0 ? 'due' : 'open'; }
+function stateOf(r) { if (r.outcome || r.review) return 'done'; return daysTo(r.due) <= 0 ? 'due' : 'open'; }  // 撤回只是标记，照样到期、照样算分
+const isWd = r => r.status === 'withdrawn';
 function isLocked(r) { return Date.now() > new Date(r.locked_at).getTime(); }
 function reached(r) { return stateOf(r) === 'done' || daysTo(r.due) <= 0; }
 function isOk(r) { return r.outcome === '对'; }
 function isBad(r) { return r.outcome === '错'; }
 function matches(r) { if (!q) return true; const k = q.toLowerCase(); return [r.item, r.claim, r.signal, r.src, r.actual, r.review, r.reason, r.how, r.quote, r.kill, r.note, ...(r.tags || [])].some(v => (v || '').toLowerCase().includes(k)); }
-const stRank = { due: 0, open: 1, done: 2, withdrawn: 3 };
+const stRank = { due: 0, open: 1, done: 2 };
 function sortRows(list) {
   const k = S.sort.key, d = S.sort.dir;
   return list.slice().sort((a, b) => {
@@ -70,15 +73,18 @@ function friendly(error) {
 }
 
 // ---------- 数据层 ----------
+async function fetchAll(table, order) {  // PostgREST 一次最多 1000 行，分页取全
+  const out = []; const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb.from(table).select('*').order(order).range(from, from + PAGE - 1);
+    if (error) throw new Error(friendly(error));
+    out.push(...(data || [])); if (!data || data.length < PAGE) return out;
+  }
+}
 async function loadAll() {
-  const [j, l, s, e] = await Promise.all([
-    sb.from('judgments').select('*').order('id'),
-    sb.from('confidence_log').select('*').order('id'),
-    sb.from('settings').select('*').maybeSingle(),
-    sb.from('events').select('*').order('date'),
-  ]);
-  for (const r of [j, l, s, e]) if (r.error) { toast(friendly(r.error), true); }
-  rows = j.data || []; logs = l.data || []; events = e.data || [];
+  const [j, l, e, s] = await Promise.all([fetchAll('judgments', 'id'), fetchAll('confidence_log', 'id'), fetchAll('events', 'date'), sb.from('settings').select('*').maybeSingle()]);
+  if (s.error) throw new Error(friendly(s.error));
+  rows = j; logs = l; events = e;
   if (s.data) {
     const d = s.data;
     S = { cols: d.columns, hidden: d.hidden, sort: d.sort, errors: d.errors, name: d.name };
@@ -92,7 +98,7 @@ async function loadAll() {
   S.hidden = (S.hidden || []).filter(k => !['num', 'item', 'claim'].includes(k));
   if (!Array.isArray(S.errors) || !S.errors.length) S.errors = ERR_DEFAULT.slice();
 }
-async function loadLogs() { const { data } = await sb.from('confidence_log').select('*').order('id'); logs = data || []; }
+async function loadLogs() { try { logs = await fetchAll('confidence_log', 'id'); } catch (e) { toast(e.message, true); } }
 async function dbUpdate(id, patch) {
   const { data, error } = await sb.from('judgments').update(patch).eq('id', id).select().single();
   if (error) { toast(friendly(error), true); return null; }
@@ -118,11 +124,10 @@ function saveSettings() {
 
 // ---------- 账本页 ----------
 function stateTag(r) {
-  const st = stateOf(r);
-  if (st === 'withdrawn') return '<span class="st wd">已撤回</span>';
-  if (st === 'done') return isOk(r) ? '<span class="st ok">判对</span>' : isBad(r) ? '<span class="st bad">判错</span>' : `<span class="st">${esc(r.outcome || '已复盘')}</span>`;
-  if (st === 'due') return '<span class="st due">到期</span>';
-  return '<span class="st">进行中</span>';
+  const st = stateOf(r); const wd = isWd(r) ? ' <span class="st wd">已撤回</span>' : '';
+  if (st === 'done') return (isOk(r) ? '<span class="st ok">判对</span>' : isBad(r) ? '<span class="st bad">判错</span>' : `<span class="st">${esc(r.outcome || '已复盘')}</span>`) + wd;
+  if (st === 'due') return '<span class="st due">到期</span>' + wd;
+  return '<span class="st">进行中</span>' + wd;
 }
 function dueCell(r) {
   const n = daysTo(r.due); const st = stateOf(r); let s = '';
@@ -140,7 +145,7 @@ function cellHTML(key, r) {
   const lock = isLocked(r) ? ' locked' : ''; const open = reached(r);
   switch (key) {
     case 'num': return `<div class="c n" data-l="">#${r.id} ${stateTag(r)}<button class="dots" title="行操作" onclick="rowMenu(${r.id},event)">⋯</button>${menuOpen === r.id ? `<div class="menu" onclick="event.stopPropagation()">
-      ${r.status === 'withdrawn' ? '' : (confirmWd === r.id ? `<span class="confirm">确定撤回？到期照样算分，并标「已撤回」 <button class="btn sm" onclick="withdraw(${r.id})">确定</button></span>` : `<button onclick="confirmWd=${r.id};go()">撤回这条判断</button>`)}
+      ${isWd(r) ? '' : (confirmWd === r.id ? `<span class="confirm">确定撤回？到期照样算分，并标「已撤回」 <button class="btn sm" onclick="withdraw(${r.id})">确定</button></span>` : `<button onclick="confirmWd=${r.id};go()">撤回这条判断</button>`)}
       <button onclick="supersede(${r.id})">新开一行替代（改口径）</button>
       <button onclick="dupRow(${r.id})">复制为新行</button>
     </div>` : ''}</div>`;
@@ -153,7 +158,7 @@ function cellHTML(key, r) {
     case 'created': return `<div class="c" data-l="创建时间">${createdCell(r)}</div>`;
     case 'due': return `<div class="c" data-l="兑现时间">${dueCell(r)}</div>`;
     case 'actual': return `<div class="c" data-l="实际情况">${open ? `<div class="cell" data-ph="到期后填实际数字和出处" onclick="edit(this,${r.id},'actual')">${hl(r.actual)}</div>` : `<div class="cell locked ph" data-ph="到兑现时间后开放"></div>`}</div>`;
-    case 'review': return `<div class="c" data-l="复盘">${open ? `${outcomeSeg(r)}<div class="cell" data-ph="${r.type === '回看' ? '先点上面的判定，再写一句' : '错在哪一环、一句教训'}" onclick="edit(this,${r.id},'review')">${hl(r.review)}</div>` : `<div class="cell locked ph" data-ph="—"></div>`}</div>`;
+    case 'review': return `<div class="c" data-l="复盘">${open ? `${outcomeSeg(r)}${r.err ? `<div style="margin-bottom:4px"><span class="st bad">${esc(r.err)}</span></div>` : ''}<div class="cell" data-ph="${r.type === '回看' ? '先点上面的判定，再写一句' : '错在哪一环、一句教训'}" onclick="edit(this,${r.id},'review')">${hl(r.review)}</div>` : `<div class="cell locked ph" data-ph="—"></div>`}</div>`;
   }
   return '';
 }
@@ -180,8 +185,8 @@ function ledgerHTML() {
   const tags = [...new Set(rows.flatMap(r => r.tags || []))].sort();
   const sortOpts = [['due', '兑现时间'], ['created', '创建时间'], ['num', '状态（到期优先）'], ['item', '事项'], ['review', '复盘结果']];
   const n = { due: 0, open: 0, done: 0, withdrawn: 0, ok: 0, bad: 0 };
-  rows.forEach(r => { const st = stateOf(r); n[st]++; if (st === 'done') { if (isOk(r)) n.ok++; if (isBad(r)) n.bad++; } });
-  return `<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:8px"><h1 style="margin:0">账本</h1><span class="sum">共 <b>${rows.length}</b> · 进行中 <b>${n.open}</b> · 到期 <b>${n.due}</b> · 已复盘 <b>${n.done}</b>（对 ${n.ok} 错 ${n.bad}）· 撤回 <b>${n.withdrawn}</b>${q ? ` · 搜「${esc(q)}」命中 <b>${list.length}</b>` : ''}</span></div>
+  rows.forEach(r => { const st = stateOf(r); n[st]++; if (isWd(r)) n.withdrawn++; if (st === 'done') { if (isOk(r)) n.ok++; if (isBad(r)) n.bad++; } });
+  return `<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:8px"><h1 style="margin:0">账本</h1><span class="sum">共 <b>${rows.length}</b> · 进行中 <b>${n.open}</b> · 到期 <b>${n.due}</b> · 已复盘 <b>${n.done}</b>（对 ${n.ok} 错 ${n.bad}）· 其中已撤回 <b>${n.withdrawn}</b>${q ? ` · 搜「${esc(q)}」命中 <b>${list.length}</b>` : ''}</span></div>
   <div class="tools">
     ${[['all', '全部'], ['due', '到期待填'], ['open', '进行中'], ['done', '已复盘']].map(([k, v]) => `<button class="chip ${filter === k ? 'on' : ''}" onclick="filter='${k}';go()">${v}</button>`).join('')}
     <span style="width:8px"></span>${tags.map(t => `<button class="chip tag ${tagF === t ? 'on' : ''}" onclick="setTag('${enc(t)}',true)">${esc(t)}</button>`).join('')}
@@ -194,7 +199,7 @@ function ledgerHTML() {
   </div>
   <div class="sheet">
     <div class="hdr" style="grid-template-columns:${tmpl}">${vis.map(k => `<div class="${S.sort.key === k ? 'sorted' : ''}" onclick="setSort('${k}')" title="点击排序">${COLDEF[k].label}${S.sort.key === k ? (S.sort.dir > 0 ? ' ↑' : ' ↓') : ''}<small>${COLDEF[k].sub}</small></div>`).join('')}</div>
-    <div id="rows">${list.length ? list.map(r => { const lock = isLocked(r) ? ' locked' : ''; const st = stateOf(r); return `<div class="r ${st}${st === 'done' && isBad(r) ? ' wrong' : ''}" data-id="${r.id}" style="grid-template-columns:${tmpl}">${vis.map(k => cellHTML(k, r)).join('')}
+    <div id="rows">${list.length ? list.map(r => { const lock = isLocked(r) ? ' locked' : ''; const st = stateOf(r); return `<div class="r ${st}${st === 'done' && isBad(r) ? ' wrong' : ''}${isWd(r) ? ' withdrawn' : ''}" data-id="${r.id}" style="grid-template-columns:${tmpl}">${vis.map(k => cellHTML(k, r)).join('')}
       ${expanded.has(r.id) ? `${'<div class="xf"></div>'.repeat(xStart)}<div class="x" style="grid-column:${xStart + 1}/-1">${detailHTML(r, lock)}</div>` : ''}</div>`; }).join('') : `<div class="empty">${rows.length ? `没有匹配的行${q ? `：搜「${esc(q)}」` : ''}` : '还没有判断。点下面「新增一行」，或者去首页用「记一条判断」。'}</div>`}</div>
     <div class="add" onclick="addRow()">＋ 新增一行（事项 → 判断 → 跟踪信号 → 兑现时间，其余以后填）</div>
   </div>
@@ -204,7 +209,7 @@ function ledgerHTML() {
 // ---------- 首页 ----------
 function homeHTML() {
   const ISO = todayISO();
-  const pend = rows.filter(r => !['done', 'withdrawn'].includes(stateOf(r)));
+  const pend = rows.filter(r => stateOf(r) !== 'done');
   const due = pend.filter(r => daysTo(r.due) <= 0).sort((a, b) => a.due < b.due ? -1 : 1);
   const up = pend.filter(r => daysTo(r.due) > 0).sort((a, b) => a.due < b.due ? -1 : 1);
   const doneAll = rows.filter(r => stateOf(r) === 'done'); const ok = doneAll.filter(isOk).length, bad = doneAll.filter(isBad).length;
@@ -247,7 +252,7 @@ function homeHTML() {
 
 // ---------- 日历 ----------
 function calendarHTML() {
-  const list = rows.filter(r => stateOf(r) !== 'withdrawn').slice().sort((a, b) => a.due < b.due ? -1 : 1);
+  const list = rows.slice().sort((a, b) => a.due < b.due ? -1 : 1);
   const months = {};
   list.forEach(r => { const m = r.due.slice(0, 7); (months[m] = months[m] || []).push(r); });
   const fixed = {}; events.forEach(e => { const m = e.date.slice(0, 7); (fixed[m] = fixed[m] || []).push(e); });
@@ -255,7 +260,7 @@ function calendarHTML() {
   return `<h1>开奖日历</h1><p class="sub">按月看哪些判断要兑现、哪些事件要盯。事件是你手工加的（财报季、政策生效日）。</p>
   <form class="evform" onsubmit="event.preventDefault();addEvent()"><input id="ev-date" type="date" value="${todayISO()}"><input id="ev-name" placeholder="事件，例：北美云厂三季报 · 关联 #5 #8"><button class="btn primary" type="submit">加事件</button></form>
   <div class="cal">${keys.length ? keys.map(m => `<div class="m">${m.slice(0, 4)} 年 ${+m.slice(5)} 月</div>
-    ${(fixed[m] || []).map(e => `<div class="ev ${daysTo(e.date) < 0 ? 'past' : ''}"><span class="d">${e.date.slice(5)}</span><div><b>${esc(e.name)}</b>${e.note ? `<div class="s">${esc(e.note)}</div>` : ''}</div><span><span class="st">事件</span> <button class="del" title="删除事件" onclick="delEvent(${e.id})">×</button></span></div>`).join('')}
+    ${(fixed[m] || []).map(e => `<div class="ev evt ${daysTo(e.date) < 0 ? 'past' : ''}"><span class="d">${e.date.slice(5)}</span><div><b>${esc(e.name)}</b>${e.note ? `<div class="s">${esc(e.note)}</div>` : ''}</div><span><span class="st">事件</span> <button class="del" title="删除事件" onclick="delEvent(${e.id})">×</button></span></div>`).join('')}
     ${(months[m] || []).map(r => `<div class="ev ${stateOf(r) === 'done' ? 'past' : ''}" onclick="openRow(${r.id})"><span class="d">${r.due.slice(5)}</span><div><b>${esc(r.item || '（未填事项）')}</b><div class="s">${esc(r.claim)}</div></div>${stateTag(r)}</div>`).join('')}`).join('') : '<div class="empty">还没有兑现时间和事件。</div>'}</div>`;
 }
 
@@ -310,7 +315,7 @@ function settingsHTML() {
 
 // ---------- 路由 ----------
 function go() {
-  if (!user) return;
+  if (!user) return; dirty = false;
   const p = (location.hash || '#home').slice(1);
   $('brand').textContent = S.name; document.title = S.name;
   main.innerHTML = ({ home: homeHTML, ledger: ledgerHTML, calendar: calendarHTML, review: reviewHTML, settings: settingsHTML })[p]?.() || homeHTML();
@@ -341,19 +346,21 @@ function edit(el, id, field) {
   if (el.querySelector('textarea')) return;
   const ta = document.createElement('textarea'); ta.value = field === 'tagsText' ? (r.tags || []).join('，') : (r[field] || ''); el.textContent = ''; el.appendChild(ta);
   const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }; fit(); ta.focus(); ta.addEventListener('input', fit);
-  let done = false;
+  let done = false; editors++;
+  const finish = () => { editors = Math.max(0, editors - 1); if (editors === 0) { go(); } else { dirty = true; } };
   const commit = async () => {
     if (done) return; done = true;
     const v = ta.value.trim();
     let patch;
-    if (field === 'tagsText') { const tags = v.split(/[,，\s]+/).filter(Boolean); patch = { tags: tags.length ? tags : ['未分类'] }; if (JSON.stringify(patch.tags) === JSON.stringify(r.tags)) { go(); return; } }
-    else { if (v === (r[field] || '')) { go(); return; } patch = { [field]: v }; }
+    if (field === 'tagsText') { const tags = v.split(/[,，\s]+/).filter(Boolean); patch = { tags: tags.length ? tags : ['未分类'] }; if (JSON.stringify(patch.tags) === JSON.stringify(r.tags)) { finish(); return; } }
+    else { if (v === (r[field] || '')) { finish(); return; } patch = { [field]: v }; }
     el.classList.add('busy');
     const ok = await dbUpdate(id, patch);
-    go(); if (ok) toast('已保存');
+    if (ok && editors > 1) { el.classList.remove('busy'); el.textContent = field === 'tagsText' ? ok.tags.join('，') : (ok[field] || ''); }  // 别的格子还在编辑：先不重绘
+    finish(); if (ok) toast('已保存');
   };
   ta.addEventListener('blur', commit);
-  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); } if (e.key === 'Escape') { done = true; go(); } });
+  ta.addEventListener('keydown', e => { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); } if (e.key === 'Escape') { done = true; finish(); } });
 }
 function editDate(el, id) {
   const r = rows.find(x => x.id === id);
@@ -366,8 +373,8 @@ function editP(id, ev) {
   ev.stopPropagation(); const r = rows.find(x => x.id === id);
   if (reached(r)) { toast('兑现时间已到，不能再改把握'); return; }
   const host = ev.currentTarget; if (host.querySelector('input')) return;
-  const i = document.createElement('input'); i.type = 'number'; i.min = 5; i.max = 95; i.step = 5; i.value = r.p ?? 75; i.style.width = '56px'; host.textContent = ''; host.appendChild(i); i.focus(); i.select();
-  i.addEventListener('blur', async () => { const v = parseInt(i.value); if (!isNaN(v) && v !== r.p) await dbUpdate(id, { p: Math.max(5, Math.min(95, Math.round(v / 5) * 5)) }); go(); });
+  const i = document.createElement('input'); i.type = 'number'; i.min = 5; i.max = 95; i.step = 5; i.value = r.p ?? ''; i.placeholder = '5–95'; i.style.width = '64px'; host.textContent = ''; host.appendChild(i); i.focus(); i.select();
+  i.addEventListener('blur', async () => { const v = parseInt(i.value); if (i.value.trim() !== '' && !isNaN(v) && v !== r.p) await dbUpdate(id, { p: Math.max(5, Math.min(95, Math.round(v / 5) * 5)) }); go(); });
   i.addEventListener('keydown', e => { if (e.key === 'Enter') i.blur(); });
 }
 async function setOutcome(id, v) { const r = rows.find(x => x.id === id); await dbUpdate(id, { outcome: r.outcome === v ? null : v }); go(); }
@@ -384,26 +391,30 @@ function renameErr(i, el) {
 async function setType(id, t) { await dbUpdate(id, { type: t, ...(t === '回看' ? { p: null } : {}) }); go(); }
 async function withdraw(id) { menuOpen = null; confirmWd = null; await dbUpdate(id, { status: 'withdrawn' }); go(); toast('已撤回，到期照样算分'); }
 async function supersede(id) {
+  if (busyAdd) return; busyAdd = true;
   const o = rows.find(r => r.id === id); menuOpen = null;
   const n = await dbInsert({ item: o.item, claim: '', due: o.due, signal: o.signal, src: o.src, tags: o.tags, reason: o.reason, quote: o.quote, kill: o.kill, type: o.type, supersedes_id: o.id, note: '替代 #' + o.id });
-  if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); expanded.add(n.id); go(); toast('已新开一行，注明替代 #' + id + '；旧行照样算'); }
+  busyAdd = false; if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); expanded.add(n.id); filter = 'all'; tagF = null; q = ''; $('q').value = ''; go(); toast('已新开一行，注明替代 #' + id + '；旧行照样算'); }
 }
 async function dupRow(id) {
+  if (busyAdd) return; busyAdd = true;
   const o = rows.find(r => r.id === id); menuOpen = null;
   const n = await dbInsert({ item: o.item, claim: o.claim, due: o.due, signal: o.signal, src: o.src, tags: o.tags, type: o.type });
-  if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); go(); }
+  busyAdd = false; if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); filter = 'all'; tagF = null; q = ''; $('q').value = ''; expanded.add(n.id); go(); toast('已复制为新行 #' + n.id); }
 }
 async function addRow() {
+  if (busyAdd) return; busyAdd = true; q = ''; $('q').value = '';
   const n = await dbInsert({ item: '', claim: '', due: addDays(todayISO(), 30), tags: ['未分类'] });
-  if (!n) return; S.sort = { key: 'created', dir: -1 }; saveSettings(); filter = 'all'; tagF = null; go();
+  busyAdd = false; if (!n) return; S.sort = { key: 'created', dir: -1 }; saveSettings(); filter = 'all'; tagF = null; go();
   toast('新行的兑现时间先按 30 天后，24 小时内记得改');
   setTimeout(() => { const first = document.querySelector(`#rows .r[data-id="${n.id}"] .item`); first && first.click(); }, 0);
 }
 async function quickAdd() {
   const item = $('qa-item').value.trim(), claim = $('qa-claim').value.trim(), due = $('qa-due').value;
   if (!item || !claim || !due) { toast('事项、判断、兑现时间都要填'); return; }
+  if (busyAdd) return; busyAdd = true;
   const n = await dbInsert({ item, claim, due, tags: ['未分类'] });
-  if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); toast('已加进账本'); openRow(n.id); }
+  busyAdd = false; if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); toast('已加进账本'); openRow(n.id); }
 }
 async function addEvent() {
   const date = $('ev-date').value, name = $('ev-name').value.trim(); if (!date || !name) { toast('日期和事件都要填'); return; }
@@ -412,7 +423,7 @@ async function addEvent() {
   events.push(data); events.sort((a, b) => a.date < b.date ? -1 : 1); go();
 }
 async function delEvent(id) { const { error } = await sb.from('events').delete().eq('id', id); if (error) { toast(friendly(error), true); return; } events = events.filter(e => e.id !== id); go(); }
-async function logout() { await sb.auth.signOut(); location.reload(); }
+async function logout() { try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* 离线也要能退出 */ } location.reload(); }
 
 // ---------- 导出 ----------
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
@@ -434,8 +445,8 @@ function showLogin() {
   $('login').hidden = false; main.innerHTML = '';
   if (!CONFIGURED) {
     ['login-go', 'login-signup', 'login-reset'].forEach(id => { $(id).disabled = true; });
-    loginMsg('还没有配置数据库。', true);
-    const s = $('login-setup'); s.hidden = false; s.textContent = '把 Supabase 项目的 URL 和 anon key 填进 config.js 后再打开这个页面。';
+    loginMsg(LIB_OK ? '还没有配置数据库。' : '依赖脚本没有加载出来，检查网络后刷新。', true);
+    const s = $('login-setup'); s.hidden = !LIB_OK; s.textContent = '把 Supabase 项目的 URL 和 anon key 填进 config.js 后再打开这个页面。';
   }
 }
 function creds() { const email = $('login-email').value.trim(), password = $('login-pass').value; if (!email) { loginMsg('先填邮箱', true); return null; } return { email, password }; }

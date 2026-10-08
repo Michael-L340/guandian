@@ -46,7 +46,7 @@ mark{background:var(--sel);color:inherit;padding:0 1px;border-radius:2px}
 .tabbar{display:none}
 
 /* ---------- layout ---------- */
-.wrap{padding-inline:20px;padding-block:18px 56px;max-width:1320px;margin:0 auto}
+.wrap{padding-inline:max(20px,env(safe-area-inset-left,0px)) max(20px,env(safe-area-inset-right,0px));padding-block:18px 56px;max-width:1320px;margin:0 auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 
 /* ---------- controls ---------- */
@@ -173,6 +173,8 @@ select.chip{appearance:auto;padding:3px 8px}
 .cal .m{font-family:var(--font-head);font-weight:var(--head-weight);font-size:15px;margin:16px 0 6px}
 .cal .ev{display:grid;grid-template-columns:72px 1fr auto;gap:12px;padding:9px 14px;background:var(--surface);border:var(--card-border);border-radius:var(--radius);box-shadow:var(--shadow-1);margin-bottom:6px;align-items:center;cursor:pointer}
 .cal .ev:hover{outline:1px solid var(--accent)}
+.cal .ev.evt{cursor:default}
+.cal .ev.evt:hover{outline:0}
 .cal .ev.past{opacity:.55}
 .cal .ev .s{font-size:12px;color:var(--fg-3)}
 
@@ -239,7 +241,7 @@ select.chip{appearance:auto;padding:3px 8px}
   .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px);z-index:5;box-shadow:0 -4px 16px rgba(0,0,0,.05)}
   .tabbar a{flex:1;text-align:center;padding:10px 4px 8px;font-size:12px;text-decoration:none;color:var(--fg-3)}
   .tabbar a.on{color:var(--accent);font-weight:600}
-  .wrap{padding-inline:16px;padding-bottom:84px}
+  .wrap{padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));padding-bottom:84px}
   .capture{grid-template-columns:1fr}
   .mast h1{font-size:26px}
   .strip{margin:0 2px 8px}
@@ -283,5 +285,6 @@ select.chip{appearance:auto;padding:3px 8px}
 .cal .ev .del{border:0;background:transparent;color:var(--fg-3);cursor:pointer;font-size:14px;padding:0 6px}
 .cal .ev .del:hover{color:var(--bad)}
 .busy{opacity:.5;pointer-events:none}
-.confirm{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--fg-2);padding:6px 10px}
+.confirm{display:flex;flex-direction:column;gap:6px;align-items:flex-start;font-size:12px;color:var(--fg-2);padding:6px 10px}
+.confirm .btn{background:var(--bad);border-color:var(--bad);color:#fff}
 @media (max-width:760px){.evform{grid-template-columns:1fr}}
