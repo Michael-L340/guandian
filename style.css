@@ -107,6 +107,7 @@ select.chip{appearance:auto;padding:3px 8px}
 .r.due{box-shadow:inset 3px 0 0 var(--warn)}
 .r.done{box-shadow:inset 3px 0 0 var(--ok)}
 .r.done.wrong{box-shadow:inset 3px 0 0 var(--bad)}
+.r.done.mid{box-shadow:inset 3px 0 0 var(--warn)}
 .r .n{font-family:var(--font-mono);font-size:11px;color:var(--fg-3);padding-top:13px;display:flex;flex-direction:column;gap:4px;align-items:flex-start}
 .dots{border:0;background:transparent;color:var(--fg-3);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:var(--radius-s);opacity:0}
 .r:hover .dots,.dots:focus-visible{opacity:1}
@@ -277,7 +278,7 @@ select.chip{appearance:auto;padding:3px 8px}
 .seg button.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
 .seg button.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent;font-weight:600}
 .seg button.mid{background:var(--warn-soft);color:var(--warn);border-color:transparent;font-weight:600}
-.r.withdrawn{opacity:.6}
+.r.withdrawn > .c:not(.n), .r.withdrawn > .x{opacity:.6}
 .r.withdrawn .item{text-decoration:line-through}
 .st.wd{background:var(--surface-2);color:var(--fg-3)}
 .evform{display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;margin:10px 0 16px}
@@ -288,3 +289,6 @@ select.chip{appearance:auto;padding:3px 8px}
 .confirm{display:flex;flex-direction:column;gap:6px;align-items:flex-start;font-size:12px;color:var(--fg-2);padding:6px 10px}
 .confirm .btn{background:var(--bad);border-color:var(--bad);color:#fff}
 @media (max-width:760px){.evform{grid-template-columns:1fr}}
+
+.box ul.plain{list-style:disc;padding-left:18px;margin:0}
+.box ul.plain li{display:list-item;border:0;padding:3px 0}

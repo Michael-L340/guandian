@@ -28,7 +28,7 @@ const COLDEF = {
 };
 const FIXED = 3; // # / 事项 / 我的判断 固定在前三列
 const ERR_DEFAULT = ['口径错', '信源错', '拍数方向错', '漏变量', '时点早', '时点晚', '用结果解释结果', '只听一个信源', '外部冲击', '表述含糊'];
-const OUTCOMES = ['对', '错', '部分对', '说不清'];
+const OUTCOMES_REVIEW = ['对', '部分对', '错', '说不清'], OUTCOMES_PLAIN = ['对', '错', '说不清'];
 const defaultS = () => ({ cols: Object.keys(COLDEF), hidden: ['created'], sort: { key: 'due', dir: 1 }, errors: ERR_DEFAULT.slice(), name: '观点复盘' });
 
 // ---------- 状态 ----------
@@ -45,7 +45,8 @@ function hl(s) { s = String(s ?? ''); if (!q) return esc(s); const re = new RegE
 function toast(t, bad) { const e = document.createElement('div'); e.className = 'toast'; if (bad) e.style.background = 'var(--bad)'; e.textContent = t; document.body.appendChild(e); setTimeout(() => e.remove(), bad ? 3200 : 1800); }
 function stateOf(r) { if (r.outcome || r.review) return 'done'; return daysTo(r.due) <= 0 ? 'due' : 'open'; }  // 撤回只是标记，照样到期、照样算分
 const isWd = r => r.status === 'withdrawn';
-function isLocked(r) { return Date.now() > new Date(r.locked_at).getTime(); }
+const isMentor = r => (r.tags || []).includes('带教');  // 带教反馈行：不进战绩
+function isLocked(r) { return Date.now() > new Date(r.locked_at).getTime() || (daysTo(r.due) <= 0 && shDate(r.created_at) < r.due); }  // 满 24 小时，或真正的预测到了兑现日
 function reached(r) { return stateOf(r) === 'done' || daysTo(r.due) <= 0; }
 function isOk(r) { return r.outcome === '对'; }
 function isBad(r) { return r.outcome === '错'; }
@@ -139,7 +140,7 @@ function dueCell(r) {
 }
 function createdCell(r) { const c = shDate(r.created_at); const n = -daysTo(c); return `<span class="d">${c}<small>${n === 0 ? '今天' : n + ' 天前'}${isLocked(r) ? ' · 🔒' : ''}</small></span>`; }
 function outcomeSeg(r) {
-  return `<div class="seg">${OUTCOMES.map(o => `<button class="${r.outcome === o ? (o === '对' ? 'ok' : o === '错' ? 'bad' : 'mid') : ''}" onclick="setOutcome(${r.id},'${o}')">${o}</button>`).join('')}</div>`;
+  return `<div class="seg">${(r.type === '回看' ? OUTCOMES_REVIEW : OUTCOMES_PLAIN).map(o => `<button class="${r.outcome === o ? (o === '对' ? 'ok' : o === '错' ? 'bad' : 'mid') : ''}" onclick="setOutcome(${r.id},'${o}')">${o}</button>`).join('')}</div>`;
 }
 function cellHTML(key, r) {
   const lock = isLocked(r) ? ' locked' : ''; const open = reached(r);
@@ -199,7 +200,7 @@ function ledgerHTML() {
   </div>
   <div class="sheet">
     <div class="hdr" style="grid-template-columns:${tmpl}">${vis.map(k => `<div class="${S.sort.key === k ? 'sorted' : ''}" onclick="setSort('${k}')" title="点击排序">${COLDEF[k].label}${S.sort.key === k ? (S.sort.dir > 0 ? ' ↑' : ' ↓') : ''}<small>${COLDEF[k].sub}</small></div>`).join('')}</div>
-    <div id="rows">${list.length ? list.map(r => { const lock = isLocked(r) ? ' locked' : ''; const st = stateOf(r); return `<div class="r ${st}${st === 'done' && isBad(r) ? ' wrong' : ''}${isWd(r) ? ' withdrawn' : ''}" data-id="${r.id}" style="grid-template-columns:${tmpl}">${vis.map(k => cellHTML(k, r)).join('')}
+    <div id="rows">${list.length ? list.map(r => { const lock = isLocked(r) ? ' locked' : ''; const st = stateOf(r); return `<div class="r ${st}${st === 'done' && isBad(r) ? ' wrong' : ''}${st === 'done' && !isOk(r) && !isBad(r) ? ' mid' : ''}${isWd(r) ? ' withdrawn' : ''}" data-id="${r.id}" style="grid-template-columns:${tmpl}">${vis.map(k => cellHTML(k, r)).join('')}
       ${expanded.has(r.id) ? `${'<div class="xf"></div>'.repeat(xStart)}<div class="x" style="grid-column:${xStart + 1}/-1">${detailHTML(r, lock)}</div>` : ''}</div>`; }).join('') : `<div class="empty">${rows.length ? `没有匹配的行${q ? `：搜「${esc(q)}」` : ''}` : '还没有判断。点下面「新增一行」，或者去首页用「记一条判断」。'}</div>`}</div>
     <div class="add" onclick="addRow()">＋ 新增一行（事项 → 判断 → 跟踪信号 → 兑现时间，其余以后填）</div>
   </div>
@@ -212,7 +213,7 @@ function homeHTML() {
   const pend = rows.filter(r => stateOf(r) !== 'done');
   const due = pend.filter(r => daysTo(r.due) <= 0).sort((a, b) => a.due < b.due ? -1 : 1);
   const up = pend.filter(r => daysTo(r.due) > 0).sort((a, b) => a.due < b.due ? -1 : 1);
-  const doneAll = rows.filter(r => stateOf(r) === 'done'); const ok = doneAll.filter(isOk).length, bad = doneAll.filter(isBad).length;
+  const doneAll = rows.filter(r => stateOf(r) === 'done' && !isMentor(r)); const ok = doneAll.filter(isOk).length, bad = doneAll.filter(isBad).length;
   const done = doneAll.slice().sort((a, b) => (b.resolved_on || '') < (a.resolved_on || '') ? -1 : 1).slice(0, 4);
   const WIN = 180; const x = d => Math.max(0, Math.min(100, daysTo(d) / WIN * 100));
   const ticks = []; const t0 = new Date(parseD(ISO));
@@ -266,7 +267,7 @@ function calendarHTML() {
 
 // ---------- 复盘 ----------
 function reviewHTML() {
-  const done = rows.filter(r => stateOf(r) === 'done'); const ok = done.filter(isOk).length, bad = done.filter(isBad).length;
+  const done = rows.filter(r => stateOf(r) === 'done' && !isMentor(r)); const ok = done.filter(isOk).length, bad = done.filter(isBad).length;
   const lessons = done.filter(isBad).sort((a, b) => (b.resolved_on || '') < (a.resolved_on || '') ? -1 : 1);
   const mentor = rows.filter(r => (r.tags || []).includes('带教'));
   const cnt = {}; S.errors.forEach(e => cnt[e] = 0); rows.filter(r => r.err).forEach(r => { cnt[r.err] = (cnt[r.err] || 0) + 1; });
@@ -291,7 +292,7 @@ function reviewHTML() {
   <h2>教训库（判错时写的复盘，按时间倒序）</h2>
   ${lessons.map(r => `<div class="lesson" onclick="openRow(${r.id})" style="cursor:pointer"><div class="h">${(r.tags || []).slice(0, 2).map(t => `<span class="tag">${esc(t)}</span>`).join('')}<span class="st bad">${esc(r.err || '判错')}</span><span class="d" style="font-size:11px;color:var(--fg-3)">#${r.id} · ${r.resolved_on || ''}</span></div><b>${esc(r.item)}</b>：${esc(r.review)}</div>`).join('') || '<div class="empty">还没有判错的记录</div>'}
   <h2>带教反馈（标签含「带教」的行）</h2>
-  ${mentor.map(r => `<div class="lesson" onclick="openRow(${r.id})" style="cursor:pointer"><div class="h">${(r.tags || []).filter(t => t !== '带教').slice(0, 2).map(t => `<span class="tag">${esc(t)}</span>`).join('')}${r.err ? `<span class="st bad">${esc(r.err)}</span>` : ''}<span class="d" style="font-size:11px;color:var(--fg-3)">#${r.id} · ${shDate(r.created_at)}</span></div><b>${esc(r.item)}</b>：${esc(r.claim)}${r.review ? ' → ' + esc(r.review) : ''}</div>`).join('') || '<div class="hint">把带教的纠错记成一行，标签加「带教」，就会汇总到这里。</div>'}`;
+  ${mentor.map(r => `<div class="lesson" onclick="openRow(${r.id})" style="cursor:pointer"><div class="h">${(r.tags || []).filter(t => t !== '带教').slice(0, 2).map(t => `<span class="tag">${esc(t)}</span>`).join('')}${r.err ? `<span class="st bad">${esc(r.err)}</span>` : ''}<span class="d" style="font-size:11px;color:var(--fg-3)">#${r.id} · ${shDate(r.created_at)}</span></div><b>${esc(r.item)}</b>：${esc(r.claim)}${r.review ? ' → ' + esc(r.review) : ''}</div>`).join('') || '<div class="hint">把带教的纠错记成一行：标签加「带教」，兑现时间填今天，就能直接选错因、写复盘。带教行不进战绩。</div>'}`;
 }
 
 // ---------- 设置 ----------
@@ -302,7 +303,7 @@ function settingsHTML() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end;margin-top:12px;max-width:620px"><div class="field" style="margin:0"><label for="np1">新密码（至少 10 位）</label><input id="np1" type="password" autocomplete="new-password"></div><div class="field" style="margin:0"><label for="np2">再输一次</label><input id="np2" type="password" autocomplete="new-password"></div><button class="btn" onclick="changePass()">修改密码</button></div></div>
   <h2>网站名字</h2><div class="field" style="max-width:320px"><input value="${esc(S.name)}" onchange="S.name=this.value.trim()||'观点复盘';saveSettings();go()"></div>
   <h2>账本规则</h2><div class="box">
-    <ul style="padding-left:18px;margin:0"><li>「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定，数据库层面改不动；想改口径用「新开一行替代」。</li><li>「实际情况 / 复盘 / 判定 / 错因」到兑现时间之后才能写。</li><li>把握只能在兑现前追加，每次改动都有记录。</li><li>没有删除，只有撤回；撤回的照样算分。</li></ul>
+    <ul class="plain"><li>「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定，数据库层面改不动；想改口径用「新开一行替代」。</li><li>「实际情况 / 复盘 / 判定 / 错因」到兑现时间之后才能写。</li><li>把握只能在兑现前追加，每次改动都有记录。</li><li>没有删除，只有撤回；撤回的照样算分。</li></ul>
     <div style="margin-top:10px"><button class="chip" onclick="S.cols=Object.keys(COLDEF);S.hidden=['created'];S.sort={key:'due',dir:1};saveSettings();go();toast('列设置已重置')">重置列设置</button></div>
   </div>
   <h2>导出</h2><div class="box">按当前列设置导出整张表，或导出全部数据。<div style="margin-top:8px"><button class="btn sm" onclick="exportMd(false)">下载 Markdown 表</button> <button class="btn sm" onclick="exportMd(true)">复制 Markdown</button> <button class="btn sm" onclick="exportJson()">下载 JSON（全部表）</button></div></div>
@@ -393,13 +394,15 @@ async function withdraw(id) { menuOpen = null; confirmWd = null; await dbUpdate(
 async function supersede(id) {
   if (busyAdd) return; busyAdd = true;
   const o = rows.find(r => r.id === id); menuOpen = null;
-  const n = await dbInsert({ item: o.item, claim: '', due: o.due, signal: o.signal, src: o.src, tags: o.tags, reason: o.reason, quote: o.quote, kill: o.kill, type: o.type, supersedes_id: o.id, note: '替代 #' + o.id });
+  const due = daysTo(o.due) > 0 ? o.due : addDays(todayISO(), 30);
+  const n = await dbInsert({ item: o.item, claim: '', due, signal: o.signal, src: o.src, tags: o.tags, reason: o.reason, quote: o.quote, kill: o.kill, type: o.type, supersedes_id: o.id, note: '替代 #' + o.id });
   busyAdd = false; if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); expanded.add(n.id); filter = 'all'; tagF = null; q = ''; $('q').value = ''; go(); toast('已新开一行，注明替代 #' + id + '；旧行照样算'); }
 }
 async function dupRow(id) {
   if (busyAdd) return; busyAdd = true;
   const o = rows.find(r => r.id === id); menuOpen = null;
-  const n = await dbInsert({ item: o.item, claim: o.claim, due: o.due, signal: o.signal, src: o.src, tags: o.tags, type: o.type });
+  const due = daysTo(o.due) > 0 ? o.due : addDays(todayISO(), 30);
+  const n = await dbInsert({ item: o.item, claim: o.claim, due, signal: o.signal, src: o.src, tags: o.tags, type: o.type });
   busyAdd = false; if (n) { S.sort = { key: 'created', dir: -1 }; saveSettings(); filter = 'all'; tagF = null; q = ''; $('q').value = ''; expanded.add(n.id); go(); toast('已复制为新行 #' + n.id); }
 }
 async function addRow() {
@@ -493,7 +496,9 @@ async function boot(session) {
   if (recovering) { recovering = false; location.hash = '#settings'; toast('请在这里设一个新密码'); }
   go();
 }
+const AUTH_ERR = (() => { const h = new URLSearchParams(location.hash.slice(1)); const e = h.get('error_description') || new URLSearchParams(location.search).get('error_description'); if (e) history.replaceState(null, '', location.pathname); return e; })();
 if (CONFIGURED) {
+  if (AUTH_ERR) setTimeout(() => loginMsg('邮件链接无效或已过期：' + AUTH_ERR.replace(/\+/g, ' ') + '。用密码登录，或点「忘记密码」重发。', true), 0);
   $('login-go').onclick = signIn; $('login-signup').onclick = signUp; $('login-reset').onclick = resetPass;
   $('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
   $('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') $('login-pass').focus(); });
