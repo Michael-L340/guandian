@@ -23,7 +23,7 @@ const COLDEF = {
   signal: { label: '跟踪信号', sub: '看哪个数、从哪取', w: '1.3fr' },
   created: { label: '创建时间', sub: '立案日', w: '92px' },
   due: { label: '兑现时间', sub: '判定日', w: '112px' },
-  actual: { label: '实际情况', sub: '到期后填', w: '1.3fr' },
+  actual: { label: '实际情况', sub: '随时可写', w: '1.3fr' },
   review: { label: '复盘', sub: '对错 · 错在哪', w: '1.4fr' },
 };
 const FIXED = 3; // # / 事项 / 我的判断 固定在前三列
@@ -33,7 +33,7 @@ const defaultS = () => ({ cols: Object.keys(COLDEF), hidden: ['created'], sort: 
 
 // ---------- 状态 ----------
 let rows = [], logs = [], events = [], S = defaultS(), user = null;
-let filter = 'all', tagF = null, q = '', expanded = new Set(), popOpen = false, menuOpen = null, confirmWd = null;
+let filter = 'all', tagF = null, q = '', expanded = new Set(), popOpen = false, menuOpen = null, confirmWd = null, confirmDel = null;
 let editors = 0, dirty = false, busyAdd = false;  // 正在编辑的格子数；有格子在编辑时推迟整页重绘
 const $ = id => document.getElementById(id);
 const main = $('main');
@@ -43,7 +43,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const enc = s => encodeURIComponent(s).replace(/'/g, '%27');
 function hl(s) { s = String(s ?? ''); if (!q) return esc(s); const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'); return s.split(re).map((piece, i) => i % 2 ? `<mark>${esc(piece)}</mark>` : esc(piece)).join(''); }
 function toast(t, bad) { const e = document.createElement('div'); e.className = 'toast'; if (bad) e.style.background = 'var(--bad)'; e.textContent = t; document.body.appendChild(e); setTimeout(() => e.remove(), bad ? 3200 : 1800); }
-function stateOf(r) { if (r.outcome || r.review) return 'done'; return daysTo(r.due) <= 0 ? 'due' : 'open'; }  // 撤回只是标记，照样到期、照样算分
+function stateOf(r) { if (r.outcome) return 'done'; return daysTo(r.due) <= 0 ? 'due' : 'open'; }  // 撤回只是标记，照样到期、照样算分
 const isWd = r => r.status === 'withdrawn';
 const isMentor = r => (r.tags || []).includes('带教');  // 带教反馈行：不进战绩
 function isLocked(r) { return Date.now() > new Date(r.locked_at).getTime() || (daysTo(r.due) <= 0 && shDate(r.created_at) < r.due); }  // 满 24 小时，或真正的预测到了兑现日
@@ -132,7 +132,7 @@ function stateTag(r) {
 }
 function dueCell(r) {
   const n = daysTo(r.due); const st = stateOf(r); let s = '';
-  if (st === 'done') s = '<small>已兑现</small>';
+  if (st === 'done') s = '<small>已判定</small>';
   else if (n <= 0) s = '<small class="warn">已到期，待填</small>';
   else if (n <= 30) s = `<small class="warn">还有 ${n} 天</small>`;
   else s = `<small>还有 ${n} 天</small>`;
@@ -149,6 +149,7 @@ function cellHTML(key, r) {
       ${isWd(r) ? '' : (confirmWd === r.id ? `<span class="confirm">确定撤回？到期照样算分，并标「已撤回」 <button class="btn sm" onclick="withdraw(${r.id})">确定</button></span>` : `<button onclick="confirmWd=${r.id};go()">撤回这条判断</button>`)}
       <button onclick="supersede(${r.id})">新开一行替代（改口径）</button>
       <button onclick="dupRow(${r.id})">复制为新行</button>
+      ${confirmDel === r.id ? `<span class="confirm">确定删除 #${r.id}？删掉后网页里找不回来 <button class="btn sm" onclick="delRow(${r.id})">确定删除</button></span>` : `<button class="danger" onclick="confirmDel=${r.id};confirmWd=null;go()">删除这一行</button>`}
     </div>` : ''}</div>`;
     case 'item': return `<div class="c" data-l="事项"><div class="cell item${lock}" data-ph="一句话说清判断对象" onclick="edit(this,${r.id},'item')">${hl(r.item)}</div><div class="sub2">${(r.tags || []).map(t => `<span class="tag" onclick="setTag('${enc(t)}')">${hl(t)}</span>`).join('')}${r.note ? `<span class="p lk">${esc(r.note)}</span>` : ''}</div></div>`;
     case 'claim': {
@@ -158,8 +159,8 @@ function cellHTML(key, r) {
     case 'signal': return `<div class="c" data-l="跟踪信号"><div class="sig"><div class="cell${lock}" data-ph="看哪个数：指标 + 口径" onclick="edit(this,${r.id},'signal')">${hl(r.signal)}</div><span class="src cell" data-ph="从哪取：数据源" onclick="edit(this,${r.id},'src')">${hl(r.src)}</span></div></div>`;
     case 'created': return `<div class="c" data-l="创建时间">${createdCell(r)}</div>`;
     case 'due': return `<div class="c" data-l="兑现时间">${dueCell(r)}</div>`;
-    case 'actual': return `<div class="c" data-l="实际情况">${open ? `<div class="cell" data-ph="到期后填实际数字和出处" onclick="edit(this,${r.id},'actual')">${hl(r.actual)}</div>` : `<div class="cell locked ph" data-ph="到兑现时间后开放"></div>`}</div>`;
-    case 'review': return `<div class="c" data-l="复盘">${open ? `${outcomeSeg(r)}${r.err ? `<div style="margin-bottom:4px"><span class="st bad">${esc(r.err)}</span></div>` : ''}<div class="cell" data-ph="${r.type === '回看' ? '先点上面的判定，再写一句' : '错在哪一环、一句教训'}" onclick="edit(this,${r.id},'review')">${hl(r.review)}</div>` : `<div class="cell locked ph" data-ph="—"></div>`}</div>`;
+    case 'actual': return `<div class="c" data-l="实际情况"><div class="cell" data-ph="实际数字和出处；兑现前也可以先记进展" onclick="edit(this,${r.id},'actual')">${hl(r.actual)}</div></div>`;
+    case 'review': return `<div class="c" data-l="复盘">${outcomeSeg(r)}${r.err ? `<div style="margin-bottom:4px"><span class="st bad">${esc(r.err)}</span></div>` : ''}<div class="cell" data-ph="${r.type === '回看' ? '点上面的判定，再写一句' : '对错、错在哪一环、一句教训'}" onclick="edit(this,${r.id},'review')">${hl(r.review)}</div></div>`;
   }
   return '';
 }
@@ -174,7 +175,7 @@ function detailHTML(r, lock) {
     <div><div class="fl">类型${lock ? ' 🔒' : ''}</div><div class="fv"><div class="cell locked" style="color:var(--fg-2)">${esc(r.type)}${lock ? '' : ` <button class="btn sm" onclick="setType(${r.id},'${r.type === '回看' ? '普通' : '回看'}')">改为${r.type === '回看' ? '普通' : '回看'}</button>`}</div></div></div>
     <div><div class="fl">把握记录</div><div class="fv"><div class="cell locked" style="color:var(--fg-2)">${plog.length ? plog.map(l => `${shDate(l.created_at)} ${l.p}%${l.note ? ' ' + esc(l.note) : ''}`).join('<br>') : (r.type === '回看' ? '回看类不填把握' : '还没填把握')}</div></div></div>
     ${r.supersedes_id ? `<div><div class="fl">替代</div><div class="fv"><div class="cell locked" style="color:var(--fg-2)">替代 #${r.supersedes_id}（旧行照样算）</div></div></div>` : ''}
-    ${reached(r) ? `<div style="grid-column:1/-1"><div class="fl">错因（判错时选一个；表在复盘页维护，也可在此直接新增）</div><div class="errs">${S.errors.map(e => `<span class="echip ${r.err === e ? 'sel' : ''}" style="cursor:pointer" onclick="setErr(${r.id},'${enc(e)}')">${esc(e)}</span>`).join('')}<input placeholder="＋ 新错因，回车" onkeydown="if(event.key==='Enter'){event.preventDefault();addErr(this.value,${r.id});}"></div></div>` : ''}
+    ${true ? `<div style="grid-column:1/-1"><div class="fl">错因（判错时选一个；表在复盘页维护，也可在此直接新增）</div><div class="errs">${S.errors.map(e => `<span class="echip ${r.err === e ? 'sel' : ''}" style="cursor:pointer" onclick="setErr(${r.id},'${enc(e)}')">${esc(e)}</span>`).join('')}<input placeholder="＋ 新错因，回车" onkeydown="if(event.key==='Enter'){event.preventDefault();addErr(this.value,${r.id});}"></div></div>` : ''}
     ${(r.revisions || []).length ? `<div style="grid-column:1/-1"><div class="fl">修订记录</div><div class="fv" style="font-size:11.5px;color:var(--fg-3)">${r.revisions.slice(-5).reverse().map(v => `${shDate(v.at)} 改了「${esc(v.field)}」，原来是：${esc(v.old || '（空）')}`).join('<br>')}</div></div>` : ''}
   </div>`;
 }
@@ -204,7 +205,7 @@ function ledgerHTML() {
       ${expanded.has(r.id) ? `${'<div class="xf"></div>'.repeat(xStart)}<div class="x" style="grid-column:${xStart + 1}/-1">${detailHTML(r, lock)}</div>` : ''}</div>`; }).join('') : `<div class="empty">${rows.length ? `没有匹配的行${q ? `：搜「${esc(q)}」` : ''}` : '还没有判断。点下面「新增一行」，或者去首页用「记一条判断」。'}</div>`}</div>
     <div class="add" onclick="addRow()">＋ 新增一行（事项 → 判断 → 跟踪信号 → 兑现时间，其余以后填）</div>
   </div>
-  <div class="hint">「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定（🔒），想改口径就用行菜单「新开一行替代」，旧行照样算。「实际情况 / 复盘」到兑现时间之后才开放。点表头可排序。</div>`;
+  <div class="hint">「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定（🔒），想改口径就用行菜单「新开一行替代」，旧行照样算。「实际情况 / 复盘」随时可写，点了判定才算已复盘。点表头可排序。</div>`;
 }
 
 // ---------- 首页 ----------
@@ -303,7 +304,7 @@ function settingsHTML() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end;margin-top:12px;max-width:620px"><div class="field" style="margin:0"><label for="np1">新密码（至少 10 位）</label><input id="np1" type="password" autocomplete="new-password"></div><div class="field" style="margin:0"><label for="np2">再输一次</label><input id="np2" type="password" autocomplete="new-password"></div><button class="btn" onclick="changePass()">修改密码</button></div></div>
   <h2>网站名字</h2><div class="field" style="max-width:320px"><input value="${esc(S.name)}" onchange="S.name=this.value.trim()||'观点复盘';saveSettings();go()"></div>
   <h2>账本规则</h2><div class="box">
-    <ul class="plain"><li>「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定，数据库层面改不动；想改口径用「新开一行替代」。</li><li>「实际情况 / 复盘 / 判定 / 错因」到兑现时间之后才能写。</li><li>把握只能在兑现前追加，每次改动都有记录。</li><li>没有删除，只有撤回；撤回的照样算分。</li></ul>
+    <ul class="plain"><li>「事项 / 判断 / 跟踪信号 / 兑现时间 / 怎么判」创建 24 小时后锁定，数据库层面改不动；想改口径用「新开一行替代」。</li><li>「实际情况 / 复盘 / 错因」随时可写，兑现前可以先记进展。点了判定（对 / 错…）才算已复盘。</li><li>把握在兑现日前、点判定前可以改，每次改动都有记录；之后锁住。点了判定后兑现时间也不能再改。</li><li>可以删除（行菜单「⋯」里，点两次确认）；删掉的判断不进战绩。想保留记录但不再跟踪，就用「撤回」，撤回的照样算分。</li></ul>
     <div style="margin-top:10px"><button class="chip" onclick="S.cols=Object.keys(COLDEF);S.hidden=['created'];S.sort={key:'due',dir:1};saveSettings();go();toast('列设置已重置')">重置列设置</button></div>
   </div>
   <h2>导出</h2><div class="box">按当前列设置导出整张表，或导出全部数据。<div style="margin-top:8px"><button class="btn sm" onclick="exportMd(false)">下载 Markdown 表</button> <button class="btn sm" onclick="exportMd(true)">复制 Markdown</button> <button class="btn sm" onclick="exportJson()">下载 JSON（全部表）</button></div></div>
@@ -322,8 +323,8 @@ function go() {
   main.innerHTML = ({ home: homeHTML, ledger: ledgerHTML, calendar: calendarHTML, review: reviewHTML, settings: settingsHTML })[p]?.() || homeHTML();
   document.querySelectorAll('.nav a.t,.tabbar a').forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + p));
 }
-window.addEventListener('hashchange', () => { popOpen = false; menuOpen = null; confirmWd = null; go(); window.scrollTo(0, 0); });
-document.addEventListener('click', () => { if (menuOpen !== null) { menuOpen = null; confirmWd = null; go(); } });
+window.addEventListener('hashchange', () => { popOpen = false; menuOpen = null; confirmWd = null; confirmDel = null; go(); window.scrollTo(0, 0); });
+document.addEventListener('click', () => { if (menuOpen !== null) { menuOpen = null; confirmWd = null; confirmDel = null; go(); } });
 function measureNav() { const n = document.querySelector('.nav'); if (n) document.documentElement.style.setProperty('--navh', n.offsetHeight + 'px'); }
 window.addEventListener('resize', measureNav); measureNav();
 $('q').addEventListener('input', e => { q = e.target.value.trim(); if (location.hash !== '#ledger') location.hash = '#ledger'; else go(); });
@@ -340,10 +341,10 @@ function openRow(id) {
   if (location.hash === '#ledger') go(); else location.hash = '#ledger';
   setTimeout(() => { const el = document.querySelector(`#rows .r[data-id="${id}"]`); el && el.scrollIntoView({ block: 'center' }); }, 60);
 }
-function rowMenu(id, ev) { ev.stopPropagation(); confirmWd = null; menuOpen = menuOpen === id ? null : id; go(); }
+function rowMenu(id, ev) { ev.stopPropagation(); confirmWd = null; confirmDel = null; menuOpen = menuOpen === id ? null : id; go(); }
 function edit(el, id, field) {
   const r = rows.find(x => x.id === id);
-  if (el.classList.contains('locked')) { toast(['actual', 'review'].includes(field) ? '到兑现时间后才开放' : '已锁定。想改口径：行菜单里「新开一行替代」'); return; }
+  if (el.classList.contains('locked')) { toast('已锁定。想改口径：行菜单里「新开一行替代」'); return; }
   if (el.querySelector('textarea')) return;
   const ta = document.createElement('textarea'); ta.value = field === 'tagsText' ? (r.tags || []).join('，') : (r[field] || ''); el.textContent = ''; el.appendChild(ta);
   const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }; fit(); ta.focus(); ta.addEventListener('input', fit);
@@ -372,13 +373,13 @@ function editDate(el, id) {
 }
 function editP(id, ev) {
   ev.stopPropagation(); const r = rows.find(x => x.id === id);
-  if (reached(r)) { toast('兑现时间已到，不能再改把握'); return; }
+  if (reached(r)) { toast('兑现时间已到或已点判定，不能再改把握'); return; }
   const host = ev.currentTarget; if (host.querySelector('input')) return;
   const i = document.createElement('input'); i.type = 'number'; i.min = 5; i.max = 95; i.step = 5; i.value = r.p ?? ''; i.placeholder = '5–95'; i.style.width = '64px'; host.textContent = ''; host.appendChild(i); i.focus(); i.select();
   i.addEventListener('blur', async () => { const v = parseInt(i.value); if (i.value.trim() !== '' && !isNaN(v) && v !== r.p) await dbUpdate(id, { p: Math.max(5, Math.min(95, Math.round(v / 5) * 5)) }); go(); });
   i.addEventListener('keydown', e => { if (e.key === 'Enter') i.blur(); });
 }
-async function setOutcome(id, v) { const r = rows.find(x => x.id === id); await dbUpdate(id, { outcome: r.outcome === v ? null : v }); go(); }
+async function setOutcome(id, v) { const r = rows.find(x => x.id === id); const was = r.outcome; const ok = await dbUpdate(id, { outcome: was === v ? null : v }); go(); if (ok && !was && daysTo(r.due) > 0) toast('已判定。兑现日前判定的，把握和兑现时间从现在起锁住'); }
 async function setErr(id, encoded) { const e = decodeURIComponent(encoded); const r = rows.find(x => x.id === id); await dbUpdate(id, { err: r.err === e ? null : e }); go(); }
 async function addErr(v, id) { v = (v || '').trim(); if (!v) return; if (!S.errors.includes(v)) { S.errors.push(v); saveSettings(); } if (id != null) await dbUpdate(id, { err: v }); go(); toast('已加入错因表：' + v); }
 function delErr(i) { const e = S.errors[i]; S.errors.splice(i, 1); saveSettings(); go(); toast('已从错因表删除：' + e); }
@@ -390,6 +391,14 @@ function renameErr(i, el) {
   inp.addEventListener('blur', done); inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
 }
 async function setType(id, t) { await dbUpdate(id, { type: t, ...(t === '回看' ? { p: null } : {}) }); go(); }
+async function delRow(id) {
+  menuOpen = null; confirmDel = null;
+  const { error } = await sb.from('judgments').delete().eq('id', id);
+  if (error) { toast(friendly(error), true); go(); return; }
+  rows = rows.filter(r => r.id !== id); logs = logs.filter(l => l.judgment_id !== id); expanded.delete(id);
+  rows.forEach(r => { if (r.supersedes_id === id) r.supersedes_id = null; });
+  go(); toast('已删除 #' + id);
+}
 async function withdraw(id) { menuOpen = null; confirmWd = null; await dbUpdate(id, { status: 'withdrawn' }); go(); toast('已撤回，到期照样算分'); }
 async function supersede(id) {
   if (busyAdd) return; busyAdd = true;
@@ -511,10 +520,11 @@ if (CONFIGURED) {
 } else showLogin();
 
 // 页面里的 onclick 是内联字符串，需要这些名字挂在 window 上；可变状态用 getter/setter 透传到模块变量
-Object.assign(window, { changePass, go, edit, editDate, editP, setOutcome, setErr, addErr, delErr, renameErr, setType, withdraw, supersede, dupRow, addRow, quickAdd, addEvent, delEvent, logout, exportMd, exportJson, clearSearch, setTag, setSort, toggleCol, moveCol, tog, openRow, rowMenu, saveSettings, toast, COLDEF });
+Object.assign(window, { delRow, changePass, go, edit, editDate, editP, setOutcome, setErr, addErr, delErr, renameErr, setType, withdraw, supersede, dupRow, addRow, quickAdd, addEvent, delEvent, logout, exportMd, exportJson, clearSearch, setTag, setSort, toggleCol, moveCol, tog, openRow, rowMenu, saveSettings, toast, COLDEF });
 Object.defineProperties(window, {
   S: { get: () => S, set: v => { S = v; } },
   filter: { get: () => filter, set: v => { filter = v; } },
   popOpen: { get: () => popOpen, set: v => { popOpen = v; } },
   confirmWd: { get: () => confirmWd, set: v => { confirmWd = v; } },
+  confirmDel: { get: () => confirmDel, set: v => { confirmDel = v; } },
 });
